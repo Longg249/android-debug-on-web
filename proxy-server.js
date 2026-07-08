@@ -1,93 +1,113 @@
 /**
- * WebSocket → TCP Proxy cho ADB qua WiFi
+ * WebSocket-TCP Proxy cho ADB qua WiFi
  *
- * Cách dùng:
- *   1. Kết nối ADB qua WiFi: adb tcpip 5555
- *   2. Chạy proxy: node proxy-server.js
- *   3. Trên web, nhập địa chỉ: ws://IP_MÁY_TÍNH:8787
- *
- * Biến môi trường:
- *   PROXY_PORT  - cổng WebSocket (mặc định 8787)
- *   ADB_HOST    - địa chỉ thiết bị ADB (mặc định đọc từ args)
- *   ADB_PORT    - cổng ADB (mặc định 5555)
+ * Usage: node proxy-server.js <device_ip>[:port]
+ *   env: PROXY_PORT (default 8787), ADB_PORT (default 5555)
  */
 
-const WebSocket = require('ws');
-const net = require('net');
+const WebSocket = require('ws')
+const net = require('net')
 
-const PROXY_PORT = parseInt(process.env.PROXY_PORT, 10) || 8787;
-const DEFAULT_ADB_PORT = parseInt(process.env.ADB_PORT, 10) || 5555;
+const PROXY_PORT = parseInt(process.env.PROXY_PORT, 10) || 8787
+const DEFAULT_ADB_PORT = parseInt(process.env.ADB_PORT, 10) || 5555
 
-const deviceTarget = process.argv[2] || process.env.ADB_HOST;
+const deviceTarget = process.argv[2] || process.env.ADB_HOST
 if (!deviceTarget) {
-  console.error('❌ Thiếu địa chỉ thiết bị.');
-  console.error('   Usage: node proxy-server.js <device_ip>');
-  console.error('   Hoặc set biến môi trường ADB_HOST');
-  process.exit(1);
+  console.error('Missing device address.')
+  console.error('Usage: node proxy-server.js <device_ip>')
+  process.exit(1)
 }
 
-const [targetHost, targetPortStr] = deviceTarget.split(':');
-const targetPort = targetPortStr ? parseInt(targetPortStr, 10) : DEFAULT_ADB_PORT;
+const [targetHost, targetPortStr] = deviceTarget.split(':')
+const targetPort = targetPortStr ? parseInt(targetPortStr, 10) : DEFAULT_ADB_PORT
 
-const wss = new WebSocket.Server({ port: PROXY_PORT });
+const wss = new WebSocket.Server({ port: PROXY_PORT })
 
-console.log(`╔══════════════════════════════════════════════╗`);
-console.log(`║     ADB WiFi Proxy Server                   ║`);
-console.log(`╠══════════════════════════════════════════════╣`);
-console.log(`║  WebSocket  → ws://0.0.0.0:${PROXY_PORT}           `);
-console.log(`║  Target     → ${targetHost}:${targetPort}                `);
-console.log(`╚══════════════════════════════════════════════╝`);
-console.log(`\n📱 Đảm bảo thiết bị đã bật ADB qua WiFi:`);
-console.log(`   adb tcpip ${targetPort}`);
-console.log(`   adb connect ${targetHost}:${targetPort}\n`);
+console.log(`WebSocket proxy listening on ws://0.0.0.0:${PROXY_PORT}`)
+console.log(`Forwarding to ${targetHost}:${targetPort}`)
 
 wss.on('connection', (ws, req) => {
-  const clientIp = req.socket.remoteAddress;
-  console.log(`🔗 Kết nối mới từ ${clientIp}`);
+  const clientIp = req.socket.remoteAddress
+  console.log(`+ connection from ${clientIp}`)
 
-  const tcpSocket = new net.Socket();
+  const pingTimer = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) ws.ping()
+  }, 30000)
 
-  tcpSocket.connect(targetPort, targetHost, () => {
-    console.log(`✅ Đã kết nối TCP đến ${targetHost}:${targetPort}`);
-  });
+  let tcpReconnectTimer = null
+  let destroyed = false
 
-  tcpSocket.on('data', (data) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data);
-    }
-  });
+  function createTcpConnection() {
+    const sock = new net.Socket()
+    let connected = false
+
+    sock.connect(targetPort, targetHost, () => {
+      connected = true
+      console.log(`  tcp connected ${targetHost}:${targetPort}`)
+    })
+
+    sock.on('data', (data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data)
+    })
+
+    sock.on('close', () => {
+      if (!connected) {
+        console.log(`  tcp connection failed, retrying...`)
+        if (!destroyed) {
+          tcpReconnectTimer = setTimeout(createTcpConnection, 2000)
+        }
+        return
+      }
+      console.log(`- tcp closed (${targetHost}:${targetPort})`)
+      clearInterval(pingTimer)
+      if (ws.readyState === WebSocket.OPEN) ws.close()
+    })
+
+    sock.on('error', (err) => {
+      if (!connected) {
+        console.log(`  tcp error: ${err.message}`)
+        sock.destroy()
+        return
+      }
+      console.error(`  tcp error: ${err.message}`)
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'error', message: err.message }))
+      }
+    })
+
+    return sock
+  }
+
+  const tcpSocket = createTcpConnection()
 
   ws.on('message', (data) => {
-    if (typeof data === 'string') {
-      tcpSocket.write(Buffer.from(data));
-    } else {
-      tcpSocket.write(Buffer.from(data));
-    }
-  });
+    const buf = typeof data === 'string' ? Buffer.from(data) : Buffer.from(data)
+    if (!tcpSocket.destroyed) tcpSocket.write(buf)
+  })
 
   ws.on('close', () => {
-    console.log(`❌ WebSocket đóng (${clientIp})`);
-    tcpSocket.destroy();
-  });
-
-  tcpSocket.on('close', () => {
-    console.log(`❌ TCP đóng (${targetHost}:${targetPort})`);
-    if (ws.readyState === WebSocket.OPEN) ws.close();
-  });
-
-  tcpSocket.on('error', (err) => {
-    console.error(`⚠️ Lỗi TCP: ${err.message}`);
-    ws.send(JSON.stringify({ type: 'error', message: err.message }));
-    ws.close();
-  });
+    console.log(`- websocket closed (${clientIp})`)
+    destroyed = true
+    clearInterval(pingTimer)
+    if (tcpReconnectTimer) clearTimeout(tcpReconnectTimer)
+    if (!tcpSocket.destroyed) tcpSocket.destroy()
+  })
 
   ws.on('error', (err) => {
-    console.error(`⚠️ Lỗi WebSocket: ${err.message}`);
-    tcpSocket.destroy();
-  });
-});
+    console.error(`  ws error: ${err.message}`)
+    destroyed = true
+    clearInterval(pingTimer)
+    if (tcpReconnectTimer) clearTimeout(tcpReconnectTimer)
+    if (!tcpSocket.destroyed) tcpSocket.destroy()
+  })
+})
 
 process.on('SIGINT', () => {
-  console.log('\n👋 Đang tắt proxy...');
-  wss.close(() => process.exit(0));
-});
+  console.log('\nShutting down...')
+  wss.close(() => process.exit(0))
+})
+
+process.on('SIGTERM', () => {
+  console.log('\nShutting down...')
+  wss.close(() => process.exit(0))
+})

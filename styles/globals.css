@@ -717,6 +717,91 @@ input::placeholder { color: var(--text-muted); }
 .app-footer a { color: var(--accent); text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
 
+/* ─── Panel Shared ─── */
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.panel-toolbar .hint { font-size: 12px; color: var(--text-muted); }
+
+.list-container, .logcat-output {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  max-height: 420px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.empty-state {
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-label input { width: auto; }
+
+/* ─── App List ─── */
+.app-list { list-style: none; }
+.app-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  border-bottom: 1px solid rgba(30, 42, 58, 0.3);
+  transition: background 0.1s;
+}
+.app-item:last-child { border-bottom: none; }
+.app-item:hover { background: var(--bg-card); }
+.app-item .app-icon { font-size: 14px; width: 20px; text-align: center; flex-shrink: 0; }
+.app-item .app-name { flex: 1; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─── Logcat ─── */
+.logcat-panel { display: flex; flex-direction: column; height: 100%; }
+.logcat-output {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 480px;
+  min-height: 320px;
+  padding: 8px 0;
+}
+.log-line {
+  padding: 1px 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--terminal-fg);
+}
+.log-line.error { color: var(--danger); }
+.log-line.warning { color: var(--terminal-yellow); }
+.log-line.info { color: var(--accent); }
+.log-line:hover { background: rgba(255, 255, 255, 0.03); }
+
+/* ─── File Meta ─── */
+.fi-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
 /* ─── Utility ─── */
 .fade-in { animation: fadeIn 0.3s ease; }
 .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }

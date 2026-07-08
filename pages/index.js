@@ -33,11 +33,13 @@ function DeviceInfo({ deviceInfo, onRefresh }) {
   )
 }
 
-function QuickActions({ onScreenshot, onShell, onFiles }) {
+function QuickActions({ onScreenshot, onShell, onFiles, onApps, onLogcat }) {
   const items = [
     { icon: '💻', label: 'Shell', action: onShell },
     { icon: '📷', label: 'Screenshot', action: onScreenshot },
     { icon: '📁', label: 'Files', action: onFiles },
+    { icon: '📦', label: 'Apps', action: onApps },
+    { icon: '📋', label: 'Logcat', action: onLogcat },
   ]
   return (
     <div className="quick-actions">
@@ -219,6 +221,7 @@ function FileExplorerPanel({ manager }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
+  const [downloading, setDownloading] = useState(null)
 
   async function load(dir) {
     setLoading(true); setErr(null)
@@ -233,6 +236,20 @@ function FileExplorerPanel({ manager }) {
 
   function go(dir) {
     load(dir === '..' ? path.split('/').slice(0, -1).join('/') || '/' : path.replace(/\/$/, '') + '/' + dir)
+  }
+
+  async function download(name) {
+    const fullPath = path.replace(/\/$/, '') + '/' + name
+    setDownloading(name)
+    try {
+      const data = await manager.downloadFile(fullPath)
+      const blob = new Blob([data])
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = name; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { alert('Download error: ' + e.message) }
+    setDownloading(null)
   }
 
   return (
@@ -259,13 +276,116 @@ function FileExplorerPanel({ manager }) {
               </li>
             )}
             {items.map((f, i) => (
-              <li key={i} className={`file-item${f.raw.startsWith('d') ? ' dir' : ''}`}
-                onClick={() => f.raw.startsWith('d') && go(f.name)}>
-                <span className="fi-icon">{f.raw.startsWith('d') ? '📁' : '📄'}</span>
+              <li key={i} className={`file-item${f.isDir ? ' dir' : ''}`}
+                onClick={() => f.isDir && go(f.name)}>
+                <span className="fi-icon">{f.isDir ? '📁' : '📄'}</span>
                 <span className="fi-name">{f.name}</span>
+                {f.size && <span className="fi-meta">{f.size}</span>}
+                {!f.isDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); download(f.name) }}
+                    disabled={downloading === f.name}>
+                    {downloading === f.name ? <span className="spinner" /> : '⬇'}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AppListPanel({ manager }) {
+  const [apps, setApps] = useState([])
+  const [loading, setLoading] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const list = await manager.listApps()
+      setApps(list)
+    } catch (err) { alert('Error: ' + err.message) }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  return (
+    <div className="list-panel">
+      <div className="panel-toolbar">
+        <span className="hint">{apps.length} third-party apps</span>
+        <button className="btn btn-sm" onClick={load} disabled={loading}>
+          {loading ? <span className="spinner" /> : '⟳ Refresh'}
+        </button>
+      </div>
+      <div className="list-container">
+        {apps.length === 0 && !loading ? (
+          <div className="empty-state">No third-party apps found</div>
+        ) : (
+          <ul className="app-list">
+            {apps.map((pkg, i) => (
+              <li key={i} className="app-item">
+                <span className="app-icon">📦</span>
+                <span className="app-name">{pkg}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function LogcatPanel({ manager }) {
+  const [lines, setLines] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [lineCount, setLineCount] = useState(100)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const outRef = useRef(null)
+
+  useEffect(() => {
+    if (autoScroll && outRef.current) {
+      outRef.current.scrollTop = outRef.current.scrollHeight
+    }
+  }, [lines, autoScroll])
+
+  async function load() {
+    setLoading(true)
+    try {
+      const output = await manager.getLogcat(lineCount)
+      setLines(output.split('\n').filter(l => l.trim()))
+    } catch (err) { alert('Error: ' + err.message) }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [lineCount])
+
+  return (
+    <div className="logcat-panel">
+      <div className="panel-toolbar">
+        <div className="input-group" style={{ width: 120 }}>
+          <input type="number" value={lineCount} onChange={e => setLineCount(Number(e.target.value))} min={10} max={10000} />
+        </div>
+        <button className="btn btn-sm" onClick={load} disabled={loading}>
+          {loading ? <span className="spinner" /> : '⟳ Refresh'}
+        </button>
+        <label className="toggle-label">
+          <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} />
+          Auto-scroll
+        </label>
+      </div>
+      <div className="logcat-output" ref={outRef}>
+        {lines.length === 0 ? (
+          <div className="empty-state">No log output</div>
+        ) : (
+          lines.map((l, i) => {
+            let cls = ''
+            if (l.includes(' E ')) cls = 'error'
+            else if (l.includes(' W ')) cls = 'warning'
+            else if (l.includes(' I ')) cls = 'info'
+            return <div key={i} className={`log-line ${cls}`}>{l}</div>
+          })
         )}
       </div>
     </div>
@@ -405,6 +525,8 @@ export default function Home() {
                 onScreenshot={() => setTab('screenshot')}
                 onShell={() => setTab('shell')}
                 onFiles={() => setTab('files')}
+                onApps={() => setTab('apps')}
+                onLogcat={() => setTab('logcat')}
               />
             </div>
             <div className="dashboard-main">
@@ -413,6 +535,8 @@ export default function Home() {
                   { id: 'shell', label: '💻 Shell' },
                   { id: 'screenshot', label: '📷 Screenshot' },
                   { id: 'files', label: '📁 Files' },
+                  { id: 'apps', label: '📦 Apps' },
+                  { id: 'logcat', label: '📋 Logcat' },
                 ].map(t => (
                   <button key={t.id} className={`tab-btn ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
                     {t.label}
@@ -423,6 +547,8 @@ export default function Home() {
                 {tab === 'shell' && <ShellPanel manager={manager} />}
                 {tab === 'screenshot' && <ScreenshotPanel manager={manager} />}
                 {tab === 'files' && <FileExplorerPanel manager={manager} />}
+                {tab === 'apps' && <AppListPanel manager={manager} />}
+                {tab === 'logcat' && <LogcatPanel manager={manager} />}
               </div>
             </div>
           </div>
