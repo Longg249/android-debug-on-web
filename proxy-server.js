@@ -1,113 +1,110 @@
-/**
- * WebSocket-TCP Proxy cho ADB qua WiFi
- *
- * Usage: node proxy-server.js <device_ip>[:port]
- *   env: PROXY_PORT (default 8787), ADB_PORT (default 5555)
- */
-
 const WebSocket = require('ws')
 const net = require('net')
+const os = require('os')
 
 const PROXY_PORT = parseInt(process.env.PROXY_PORT, 10) || 8787
 const DEFAULT_ADB_PORT = parseInt(process.env.ADB_PORT, 10) || 5555
 
-const deviceTarget = process.argv[2] || process.env.ADB_HOST
-if (!deviceTarget) {
-  console.error('Missing device address.')
-  console.error('Usage: node proxy-server.js <device_ip>')
-  process.exit(1)
+const DEFAULT_TARGET = process.argv[2] || process.env.ADB_HOST || ''
+const [defaultHost, defaultPortStr] = DEFAULT_TARGET.split(':')
+const defaultPort = defaultPortStr ? parseInt(defaultPortStr, 10) : DEFAULT_ADB_PORT
+
+const interfaces = os.networkInterfaces()
+const ips = []
+for (const name of Object.keys(interfaces)) {
+  for (const iface of interfaces[name]) {
+    if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address)
+  }
 }
 
-const [targetHost, targetPortStr] = deviceTarget.split(':')
-const targetPort = targetPortStr ? parseInt(targetPortStr, 10) : DEFAULT_ADB_PORT
+console.log('ADB WiFi Proxy')
+console.log('='.repeat(40))
+console.log(`Listening on ws://0.0.0.0:${PROXY_PORT}`)
+ips.forEach(ip => console.log(`LAN access: ws://${ip}:${PROXY_PORT}`))
+console.log('')
+console.log('Usage:')
+console.log(`  1. adb tcpip ${DEFAULT_ADB_PORT}`)
+console.log(`  2. adb connect <DEVICE_IP>:${DEFAULT_ADB_PORT}`)
+console.log(`  3. In web app, enter device IP and connect`)
+if (DEFAULT_TARGET) console.log(`\nDefault target: ${defaultHost}:${defaultPort}`)
+console.log('')
 
 const wss = new WebSocket.Server({ port: PROXY_PORT })
 
-console.log(`WebSocket proxy listening on ws://0.0.0.0:${PROXY_PORT}`)
-console.log(`Forwarding to ${targetHost}:${targetPort}`)
+function parseTarget(req) {
+  try {
+    const url = new URL(req.url, 'http://localhost')
+    const pm = url.pathname.match(/\/connect\/([^:]+)(?::(\d+))?/)
+    if (pm) return { host: pm[1], port: pm[2] ? parseInt(pm[2], 10) : DEFAULT_ADB_PORT }
+    const qt = url.searchParams.get('target')
+    if (qt) {
+      const p = qt.split(':')
+      return { host: p[0], port: p[1] ? parseInt(p[1], 10) : DEFAULT_ADB_PORT }
+    }
+  } catch {}
+  if (defaultHost) return { host: defaultHost, port: defaultPort }
+  return null
+}
 
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress
-  console.log(`+ connection from ${clientIp}`)
+  const target = parseTarget(req)
 
-  const pingTimer = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.ping()
-  }, 30000)
+  if (!target) {
+    ws.send(JSON.stringify({ type: 'error', message: 'No device target. Use /connect/IP:PORT or set ADB_HOST' }))
+    ws.close()
+    return
+  }
 
-  let tcpReconnectTimer = null
+  console.log(`+ ${clientIp} → ${target.host}:${target.port}`)
+
+  const pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.ping() }, 30000)
   let destroyed = false
+  let tcpRetry = null
 
-  function createTcpConnection() {
+  function connectTcp() {
     const sock = new net.Socket()
     let connected = false
 
-    sock.connect(targetPort, targetHost, () => {
+    sock.connect(target.port, target.host, () => {
       connected = true
-      console.log(`  tcp connected ${targetHost}:${targetPort}`)
+      console.log(`  tcp connected ${target.host}:${target.port}`)
     })
 
-    sock.on('data', (data) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(data)
-    })
+    sock.on('data', (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(data) })
 
     sock.on('close', () => {
       if (!connected) {
-        console.log(`  tcp connection failed, retrying...`)
-        if (!destroyed) {
-          tcpReconnectTimer = setTimeout(createTcpConnection, 2000)
-        }
+        if (!destroyed) tcpRetry = setTimeout(connectTcp, 2000)
         return
       }
-      console.log(`- tcp closed (${targetHost}:${targetPort})`)
       clearInterval(pingTimer)
       if (ws.readyState === WebSocket.OPEN) ws.close()
     })
 
-    sock.on('error', (err) => {
-      if (!connected) {
-        console.log(`  tcp error: ${err.message}`)
-        sock.destroy()
-        return
-      }
-      console.error(`  tcp error: ${err.message}`)
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'error', message: err.message }))
-      }
-    })
+    sock.on('error', () => { if (!connected) sock.destroy() })
 
     return sock
   }
 
-  const tcpSocket = createTcpConnection()
+  const tcp = connectTcp()
 
-  ws.on('message', (data) => {
-    const buf = typeof data === 'string' ? Buffer.from(data) : Buffer.from(data)
-    if (!tcpSocket.destroyed) tcpSocket.write(buf)
-  })
+  ws.on('message', (data) => { if (!tcp.destroyed) tcp.write(typeof data === 'string' ? Buffer.from(data) : Buffer.from(data)) })
 
   ws.on('close', () => {
-    console.log(`- websocket closed (${clientIp})`)
     destroyed = true
     clearInterval(pingTimer)
-    if (tcpReconnectTimer) clearTimeout(tcpReconnectTimer)
-    if (!tcpSocket.destroyed) tcpSocket.destroy()
+    if (tcpRetry) clearTimeout(tcpRetry)
+    if (!tcp.destroyed) tcp.destroy()
   })
 
-  ws.on('error', (err) => {
-    console.error(`  ws error: ${err.message}`)
+  ws.on('error', () => {
     destroyed = true
     clearInterval(pingTimer)
-    if (tcpReconnectTimer) clearTimeout(tcpReconnectTimer)
-    if (!tcpSocket.destroyed) tcpSocket.destroy()
+    if (tcpRetry) clearTimeout(tcpRetry)
+    if (!tcp.destroyed) tcp.destroy()
   })
 })
 
-process.on('SIGINT', () => {
-  console.log('\nShutting down...')
-  wss.close(() => process.exit(0))
-})
-
-process.on('SIGTERM', () => {
-  console.log('\nShutting down...')
-  wss.close(() => process.exit(0))
-})
+process.on('SIGINT', () => { console.log('\nShutdown.'); wss.close(() => process.exit(0)) })
+process.on('SIGTERM', () => { console.log('\nShutdown.'); wss.close(() => process.exit(0)) })
