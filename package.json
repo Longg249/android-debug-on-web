@@ -4,9 +4,9 @@
   "description": "ADB trên web - kết nối Android qua USB/WiFi",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.js",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.js --prod",
     "lint": "next lint",
     "proxy": "node proxy-server.js"
   },

@@ -398,9 +398,8 @@ export default function Home() {
   const [deviceInfo, setDeviceInfo] = useState(null)
   const [errMsg, setErrMsg] = useState(null)
   const [tab, setTab] = useState('shell')
-  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   const [deviceIp, setDeviceIp] = useState('')
-  const [proxyHost, setProxyHost] = useState(isLocal ? 'localhost:8787' : '')
+  const [devicePort, setDevicePort] = useState('5555')
   const [toasts, setToasts] = useState([])
   const [connecting, setConnecting] = useState(false)
 
@@ -427,9 +426,8 @@ export default function Home() {
 
   const connectUsb = async () => { setErrMsg(null); toast('Connecting USB...', 'info'); await manager.connectUsb() }
   const connectWifi = async () => {
-    const host = isLocal ? 'localhost:8787' : proxyHost
-    if (!host) { toast('Enter proxy host IP', 'error'); return }
-    const url = `ws://${host}/connect/${deviceIp}:5555`
+    const origin = typeof window !== 'undefined' ? window.location : { host: 'localhost:3000' }
+    const url = `ws://${origin.host}/adb-proxy?target=${deviceIp}:${devicePort}`
     setErrMsg(null); toast('Connecting WiFi...', 'info'); await manager.connectWifi(url)
   }
   const disconnect = async () => { await manager.disconnect(); toast('Disconnected', 'info') }
@@ -495,12 +493,14 @@ export default function Home() {
               <div className="card-icon wifi">📶</div>
               <div className="card-body">
                 <h3>WiFi Connection</h3>
-                <p>Connect over LAN with a WebSocket proxy.</p>
+                <p>Connect directly to device via LAN.</p>
               </div>
             </div>
             <div className="card-action" style={{ flexDirection: 'column', gap: 8 }}>
-              <input value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP (e.g. 192.168.1.100)" />
-              {!isLocal && <input value={proxyHost} onChange={e => setProxyHost(e.target.value)} placeholder="Proxy Host IP:Port (e.g. 192.168.1.50:8787)" />}
+              <div className="input-group">
+                <input value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP (e.g. 192.168.1.100)" />
+                <input value={devicePort} onChange={e => setDevicePort(e.target.value)} placeholder="5555" style={{ maxWidth: 80 }} />
+              </div>
               <button className="btn btn-primary" onClick={connectWifi} disabled={connecting || connected || !deviceIp.trim()}
                 style={{ width: '100%' }}>
                 {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : '🔗 Connect WiFi'}
@@ -511,13 +511,8 @@ export default function Home() {
                 <summary className="hint-header">📖 How to connect via WiFi</summary>
                 <div className="hint-content">
                   <code>1. adb tcpip 5555</code>
-                  <code>2. adb connect {deviceIp || 'DEVICE_IP'}:5555</code>
-                  <code>3. node proxy-server.js {deviceIp || 'DEVICE_IP'}</code>
-                  {isLocal ? (
-                    <code>4. Enter device IP above → click Connect</code>
-                  ) : (
-                    <code>4. Enter device IP + PC Proxy IP above → click Connect</code>
-                  )}
+                  <code>2. adb connect {deviceIp || 'DEVICE_IP'}:{devicePort || '5555'}</code>
+                  <code>3. Enter device IP:Port above → click Connect</code>
                 </div>
               </details>
             </div>
@@ -581,7 +576,7 @@ export default function Home() {
                 <div className="step-num">2</div>
                 <h4>Choose connection method</h4>
                 <p><strong>USB:</strong> Plug in cable → click <code>Connect USB</code><br />
-                  <strong>WiFi:</strong> Run <code>node proxy-server.js DEVICE_IP</code> → enter device IP above → click <code>Connect WiFi</code></p>
+                  <strong>WiFi:</strong> Run <code>npm run dev</code> → enter device IP → click <code>Connect WiFi</code></p>
               </div>
               <div className="step-card">
                 <div className="step-num">3</div>
