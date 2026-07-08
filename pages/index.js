@@ -397,8 +397,10 @@ export default function Home() {
   const [deviceInfo, setDeviceInfo] = useState(null)
   const [errMsg, setErrMsg] = useState(null)
   const [tab, setTab] = useState('shell')
+  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   const [deviceIp, setDeviceIp] = useState('')
   const [devicePort, setDevicePort] = useState('5555')
+  const [proxyHost, setProxyHost] = useState('')
   const [toasts, setToasts] = useState([])
   const [connecting, setConnecting] = useState(false)
 
@@ -425,8 +427,13 @@ export default function Home() {
 
   const connectUsb = async () => { setErrMsg(null); toast('Connecting USB...', 'info'); await manager.connectUsb() }
   const connectWifi = async () => {
-    const origin = typeof window !== 'undefined' ? window.location : { host: 'localhost:3000' }
-    const url = `ws://${origin.host}/adb-proxy?target=${deviceIp}:${devicePort}`
+    let url
+    if (isLocal) {
+      url = `ws://${window.location.host}/adb-proxy?target=${deviceIp}:${devicePort}`
+    } else {
+      if (!proxyHost) { toast('Enter proxy server address', 'error'); return }
+      url = `ws://${proxyHost}/adb-proxy?target=${deviceIp}:${devicePort}`
+    }
     setErrMsg(null); toast('Connecting WiFi...', 'info'); await manager.connectWifi(url)
   }
   const disconnect = async () => { await manager.disconnect(); toast('Disconnected', 'info') }
@@ -500,9 +507,10 @@ export default function Home() {
                 <input value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP (e.g. 192.168.1.100)" />
                 <input value={devicePort} onChange={e => setDevicePort(e.target.value)} placeholder="5555" style={{ maxWidth: 80 }} />
               </div>
+              {!isLocal && <input value={proxyHost} onChange={e => setProxyHost(e.target.value)} placeholder="Proxy IP:Port (e.g. 192.168.1.50:8787)" />}
               <button className="btn btn-primary" onClick={connectWifi} disabled={connecting || connected || !deviceIp.trim()}
                 style={{ width: '100%' }}>
-                  {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : 'Connect WiFi'}
+                {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : 'Connect WiFi'}
               </button>
             </div>
             <div className="hint-box">
@@ -511,7 +519,11 @@ export default function Home() {
                 <div className="hint-content">
                   <code>1. adb tcpip 5555</code>
                   <code>2. adb connect {deviceIp || 'DEVICE_IP'}:{devicePort || '5555'}</code>
-                  <code>3. Enter device IP:Port above → click Connect</code>
+                  {isLocal ? (
+                    <code>3. Enter device IP:Port above → click Connect</code>
+                  ) : (
+                    <code>3. Run: node proxy-server.js {deviceIp || 'DEVICE_IP'}</code>
+                  )}
                 </div>
               </details>
             </div>
