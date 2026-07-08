@@ -35,11 +35,11 @@ function DeviceInfo({ deviceInfo, onRefresh }) {
 
 function QuickActions({ onScreenshot, onShell, onFiles, onApps, onLogcat }) {
   const items = [
-    { icon: '💻', label: 'Shell', action: onShell },
-    { icon: '📷', label: 'Screenshot', action: onScreenshot },
-    { icon: '📁', label: 'Files', action: onFiles },
-    { icon: '📦', label: 'Apps', action: onApps },
-    { icon: '📋', label: 'Logcat', action: onLogcat },
+    { icon: '~$', label: 'Shell', action: onShell },
+    { icon: '⊞', label: 'Capture', action: onScreenshot },
+    { icon: '▸', label: 'Files', action: onFiles },
+    { icon: '◎', label: 'Apps', action: onApps },
+    { icon: '≡', label: 'Logcat', action: onLogcat },
   ]
   return (
     <div className="quick-actions">
@@ -142,10 +142,9 @@ function ShellPanel({ manager }) {
 
       <div className="terminal-box">
         <div className="terminal-bar">
-          <span className="dot r" /><span className="dot y" /><span className="dot g" />
-          <span className="title">adb-shell</span>
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
-            {busy ? 'running...' : ''}
+          <span className="title">adb shell</span>
+          <span className="meta">
+            {busy ? 'running... ' : ''}
             {stream ? 'interactive' : 'single'}
           </span>
         </div>
@@ -191,7 +190,7 @@ function ScreenshotPanel({ manager }) {
           <img src={data} alt="screenshot" />
         ) : (
           <div className="placeholder">
-            <div className="ph-icon">📱</div>
+            <div className="ph-icon">⊞</div>
             <h3>Screen capture</h3>
             <p>Capture your device screen and save it as PNG</p>
           </div>
@@ -199,16 +198,16 @@ function ScreenshotPanel({ manager }) {
       </div>
       <div className="screenshot-actions">
         <button className="btn btn-primary" onClick={capture} disabled={loading}>
-          {loading ? <><span className="spinner" /> Capturing...</> : '📷 Capture'}
+          {loading ? <><span className="spinner" /> Capturing...</> : 'Capture'}
         </button>
         {data && (
           <>
-            <button className="btn" onClick={capture} disabled={loading}>⟳ Recapture</button>
+            <button className="btn" onClick={capture} disabled={loading}>↻ Recapture</button>
             <button className="btn" onClick={() => {
               const a = document.createElement('a')
               a.href = data; a.download = `screenshot_${Date.now()}.png`; a.click()
-            }}>💾 Download</button>
-            <button className="btn btn-ghost" onClick={() => setData(null)}>✕ Dismiss</button>
+            }}>↓ Download</button>
+            <button className="btn btn-ghost" onClick={() => setData(null)}>× Dismiss</button>
           </>
         )}
       </div>
@@ -261,7 +260,7 @@ function FileExplorerPanel({ manager }) {
           {loading ? <span className="spinner" /> : 'Go'}
         </button>
       </div>
-      {err && <div className="error-banner"><span className="err-icon">⚠️</span> {err}</div>}
+      {err && <div className="error-banner"><span className="err-icon">!</span> {err}</div>}
       <div className="file-list-container">
         {items.length === 0 && !loading ? (
           <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -278,13 +277,13 @@ function FileExplorerPanel({ manager }) {
             {items.map((f, i) => (
               <li key={i} className={`file-item${f.isDir ? ' dir' : ''}`}
                 onClick={() => f.isDir && go(f.name)}>
-                <span className="fi-icon">{f.isDir ? '📁' : '📄'}</span>
+                <span className="fi-icon">{f.isDir ? '▸' : '·'}</span>
                 <span className="fi-name">{f.name}</span>
                 {f.size && <span className="fi-meta">{f.size}</span>}
                 {!f.isDir && (
                   <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); download(f.name) }}
                     disabled={downloading === f.name}>
-                    {downloading === f.name ? <span className="spinner" /> : '⬇'}
+                    {downloading === f.name ? <span className="spinner" /> : '↓'}
                   </button>
                 )}
               </li>
@@ -326,7 +325,7 @@ function AppListPanel({ manager }) {
           <ul className="app-list">
             {apps.map((pkg, i) => (
               <li key={i} className="app-item">
-                <span className="app-icon">📦</span>
+                <span className="app-prefix">◎</span>
                 <span className="app-name">{pkg}</span>
               </li>
             ))}
@@ -446,7 +445,7 @@ export default function Home() {
 
       <header className="app-header">
         <div className="header-left">
-          <h1>🤖 ADB Web <span className="badge">v1.0</span></h1>
+          <h1><span className="logo-accent">adb</span> web <span className="badge">v1.0</span></h1>
         </div>
         <div className="header-right">
           <span className={`status-badge ${state}`}>
@@ -456,7 +455,7 @@ export default function Home() {
                [CONNECT_STATE.ERROR]: 'Error' }[state]}
             {connecting && <span className="spinner" style={{ marginLeft: 4 }} />}
           </span>
-          {connected && <button className="btn btn-sm btn-danger" onClick={disconnect}>🔌 Disconnect</button>}
+          {connected && <button className="btn btn-sm btn-danger" onClick={disconnect}>Disconnect</button>}
         </div>
       </header>
 
@@ -464,7 +463,7 @@ export default function Home() {
         <div className="connection-panel">
           <div className="connection-card">
             <div className="card-header">
-              <div className="card-icon usb">🔌</div>
+              <div className="card-icon usb">USB</div>
               <div className="card-body">
                 <h3>USB Connection</h3>
                 <p>Connect via cable using WebUSB. Chrome / Edge required.</p>
@@ -472,12 +471,12 @@ export default function Home() {
             </div>
             <div className="card-action">
               <button className="btn btn-primary" onClick={connectUsb} disabled={connecting || connected}>
-                {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : '🔗 Connect USB'}
+                  {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : 'Connect USB'}
               </button>
             </div>
             <div className="hint-box">
               <details>
-                <summary className="hint-header">📖 How to connect via USB</summary>
+                <summary className="hint-header">How to connect via USB</summary>
                 <div className="hint-content">
                   <code>1. Enable Developer Options & USB Debugging on Android</code>
                   <code>2. Plug in the USB cable</code>
@@ -490,7 +489,7 @@ export default function Home() {
 
           <div className="connection-card">
             <div className="card-header">
-              <div className="card-icon wifi">📶</div>
+              <div className="card-icon wifi">WiFi</div>
               <div className="card-body">
                 <h3>WiFi Connection</h3>
                 <p>Connect directly to device via LAN.</p>
@@ -503,12 +502,12 @@ export default function Home() {
               </div>
               <button className="btn btn-primary" onClick={connectWifi} disabled={connecting || connected || !deviceIp.trim()}
                 style={{ width: '100%' }}>
-                {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : '🔗 Connect WiFi'}
+                  {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : 'Connect WiFi'}
               </button>
             </div>
             <div className="hint-box">
               <details>
-                <summary className="hint-header">📖 How to connect via WiFi</summary>
+                <summary className="hint-header">How to connect via WiFi</summary>
                 <div className="hint-content">
                   <code>1. adb tcpip 5555</code>
                   <code>2. adb connect {deviceIp || 'DEVICE_IP'}:{devicePort || '5555'}</code>
@@ -520,7 +519,7 @@ export default function Home() {
         </div>
 
         {errMsg && state === CONNECT_STATE.ERROR && (
-          <div className="error-banner"><span className="err-icon">⚠️</span> {errMsg}</div>
+          <div className="error-banner"><span className="err-icon">!</span> {errMsg}</div>
         )}
 
         {connected ? (
@@ -538,11 +537,11 @@ export default function Home() {
             <div className="dashboard-main">
               <nav className="tab-nav">
                 {[
-                  { id: 'shell', label: '💻 Shell' },
-                  { id: 'screenshot', label: '📷 Screenshot' },
-                  { id: 'files', label: '📁 Files' },
-                  { id: 'apps', label: '📦 Apps' },
-                  { id: 'logcat', label: '📋 Logcat' },
+                  { id: 'shell', label: 'Shell' },
+                  { id: 'screenshot', label: 'Capture' },
+                  { id: 'files', label: 'Files' },
+                  { id: 'apps', label: 'Apps' },
+                  { id: 'logcat', label: 'Logcat' },
                 ].map(t => (
                   <button key={t.id} className={`tab-btn ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
                     {t.label}
@@ -560,7 +559,7 @@ export default function Home() {
           </div>
         ) : (
           <div className="connect-prompt">
-            <div className="cp-icon">🤖</div>
+            <div className="cp-icon">adb</div>
             <h2>Connect your Android device</h2>
             <p>
               Use USB cable or WiFi to control your Android device directly from the browser.
