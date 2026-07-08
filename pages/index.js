@@ -661,10 +661,8 @@ export default function Home() {
   const [deviceInfo, setDeviceInfo] = useState(null)
   const [errMsg, setErrMsg] = useState(null)
   const [tab, setTab] = useState('shell')
-  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   const [deviceIp, setDeviceIp] = useState('')
   const [devicePort, setDevicePort] = useState('5555')
-  const [proxyHost, setProxyHost] = useState('')
   const [toasts, setToasts] = useState([])
   const [connecting, setConnecting] = useState(false)
 
@@ -691,7 +689,8 @@ export default function Home() {
 
   const connectUsb = async () => { setErrMsg(null); toast('Connecting USB...', 'info'); await manager.connectUsb() }
   const connectWifi = async () => {
-    const host = isLocal ? window.location.host : proxyHost
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    const host = isLocal ? window.location.host : 'localhost:8787'
     const url = `ws://${host}/adb-proxy?target=${deviceIp}:${devicePort}`
     setErrMsg(null); toast('Connecting WiFi...', 'info'); await manager.connectWifi(url)
   }
@@ -758,11 +757,7 @@ export default function Home() {
               <div className="card-icon wifi">WiFi</div>
               <div className="card-body">
                 <h3>WiFi Connection</h3>
-                {isLocal ? (
-                  <p>Connect directly to device via LAN.</p>
-                ) : (
-                  <p>Requires a proxy server on your LAN. <a href="https://github.com/Longg249/android-debug-on-web" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Run locally</a> for zero-config.</p>
-                )}
+                <p>Connect to device over LAN.</p>
               </div>
             </div>
             <div className="card-action" style={{ flexDirection: 'column', gap: 8 }}>
@@ -770,12 +765,8 @@ export default function Home() {
                 <input value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP (e.g. 192.168.1.100)" />
                 <input value={devicePort} onChange={e => setDevicePort(e.target.value)} placeholder="5555" style={{ maxWidth: 80 }} />
               </div>
-              {!isLocal && (
-                <input value={proxyHost} onChange={e => setProxyHost(e.target.value)}
-                  placeholder="Proxy IP:Port (e.g. 192.168.1.50:8787)" />
-              )}
               <button className="btn btn-primary" onClick={connectWifi}
-                disabled={connecting || connected || !deviceIp.trim() || (!isLocal && !proxyHost)}
+                disabled={connecting || connected || !deviceIp.trim()}
                 style={{ width: '100%' }}>
                 {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : 'Connect WiFi'}
               </button>
@@ -786,14 +777,8 @@ export default function Home() {
                 <div className="hint-content">
                   <code>1. adb tcpip 5555</code>
                   <code>2. adb connect {deviceIp || 'DEVICE_IP'}:{devicePort || '5555'}</code>
-                  {isLocal ? (
-                    <code>3. Enter device IP:Port above → click Connect</code>
-                  ) : (
-                    <>
-                      <code>3. On your PC, run: node proxy-server.js {deviceIp || 'DEVICE_IP'}</code>
-                      <code>4. Enter the proxy IP:Port above → click Connect</code>
-                    </>
-                  )}
+                  <code>3. Enter device IP:Port above → click Connect</code>
+                  <code style={{ color: 'var(--text-muted)' }}>Proxy auto-connects to localhost:8787 — run node proxy-server.js if needed</code>
                 </div>
               </details>
             </div>
