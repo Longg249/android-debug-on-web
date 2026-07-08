@@ -33,13 +33,17 @@ function DeviceInfo({ deviceInfo, onRefresh }) {
   )
 }
 
-function QuickActions({ onScreenshot, onShell, onFiles, onApps, onLogcat }) {
+function QuickActions({ onShell, onScreenshot, onFiles, onApps, onLogcat, onBattery, onProcess, onApk, onRecord }) {
   const items = [
     { icon: '~$', label: 'Shell', action: onShell },
     { icon: '⊞', label: 'Capture', action: onScreenshot },
     { icon: '▸', label: 'Files', action: onFiles },
     { icon: '◎', label: 'Apps', action: onApps },
     { icon: '≡', label: 'Logcat', action: onLogcat },
+    { icon: '🔋', label: 'Health', action: onBattery },
+    { icon: '◉', label: 'Process', action: onProcess },
+    { icon: '⊟', label: 'APK', action: onApk },
+    { icon: '▶', label: 'Record', action: onRecord },
   ]
   return (
     <div className="quick-actions">
@@ -61,6 +65,8 @@ function ShellPanel({ manager }) {
   const [lines, setLines] = useState([])
   const [busy, setBusy] = useState(false)
   const [stream, setStream] = useState(null)
+  const [history, setHistory] = useState([])
+  const [histIdx, setHistIdx] = useState(-1)
   const outRef = useRef(null)
   const inpRef = useRef(null)
 
@@ -83,6 +89,8 @@ function ShellPanel({ manager }) {
     }
     setBusy(false)
     setCmd('')
+    setHistory(prev => [...prev.slice(-99), c])
+    setHistIdx(-1)
     inpRef.current?.focus()
   }
 
@@ -126,14 +134,36 @@ function ShellPanel({ manager }) {
     }
     setBusy(false)
     setCmd('')
+    setHistory(prev => [...prev.slice(-99), c])
+    setHistIdx(-1)
     inpRef.current?.focus()
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (history.length === 0) return
+      const idx = histIdx === -1 ? history.length - 1 : Math.max(0, histIdx - 1)
+      setHistIdx(idx)
+      setCmd(history[idx])
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (histIdx === -1) return
+      const idx = histIdx + 1
+      if (idx >= history.length) { setHistIdx(-1); setCmd('') }
+      else { setHistIdx(idx); setCmd(history[idx]) }
+    }
   }
 
   return (
     <div className="terminal-container">
       <div className="terminal-toolbar">
         <span className="hint">{stream ? 'Shell mode' : 'Single command mode'}</span>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <select className="preset-select" onChange={e => { const v = e.target.value; if (v) { setCmd(v); inpRef.current?.focus() } }} defaultValue="">
+            <option value="" disabled>Presets</option>
+            {PRESET_COMMANDS.map((p, i) => <option key={i} value={p.cmd}>{p.label}</option>)}
+          </select>
           {!stream && <button className="btn btn-sm" onClick={openShell} disabled={busy}>Open shell</button>}
           {stream && <button className="btn btn-sm btn-danger" onClick={() => { stream.close(); setStream(null); addLine('shell closed\n', 'info') }}>Close shell</button>}
           <button className="btn btn-sm btn-ghost" onClick={() => setLines([])}>Clear</button>
@@ -163,6 +193,7 @@ function ShellPanel({ manager }) {
         <form className="terminal-input-row" onSubmit={handleSubmit}>
           <span className="prompt-char">{stream ? '>' : '$'}</span>
           <input ref={inpRef} type="text" value={cmd} onChange={e => setCmd(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder={stream ? 'type command...' : 'adb shell command...'} disabled={busy} autoFocus />
         </form>
       </div>
@@ -221,6 +252,7 @@ function FileExplorerPanel({ manager }) {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
   const [downloading, setDownloading] = useState(null)
+  const [uploading, setUploading] = useState(null)
 
   async function load(dir) {
     setLoading(true); setErr(null)
@@ -251,11 +283,32 @@ function FileExplorerPanel({ manager }) {
     setDownloading(null)
   }
 
+  async function uploadFile() {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.onchange = async () => {
+      const file = input.files[0]
+      if (!file) return
+      setUploading(file.name)
+      try {
+        const buf = await file.arrayBuffer()
+        const fullPath = path.replace(/\/$/, '') + '/' + file.name
+        await manager.pushFile(fullPath, new Uint8Array(buf))
+        load()
+      } catch (e) { alert('Upload error: ' + e.message) }
+      setUploading(null)
+    }
+    input.click()
+  }
+
   return (
     <div className="file-explorer">
       <div className="path-bar">
         <input value={path} onChange={e => setPath(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && load()} placeholder="/sdcard" />
+        <button className="btn btn-sm" onClick={uploadFile} disabled={uploading !== null}>
+          {uploading ? <><span className="spinner" /> {uploading}</> : '↑ Upload'}
+        </button>
         <button className="btn btn-sm btn-primary" onClick={() => load()} disabled={loading}>
           {loading ? <span className="spinner" /> : 'Go'}
         </button>
@@ -341,6 +394,7 @@ function LogcatPanel({ manager }) {
   const [loading, setLoading] = useState(false)
   const [lineCount, setLineCount] = useState(100)
   const [autoScroll, setAutoScroll] = useState(true)
+  const [filterText, setFilterText] = useState('')
   const outRef = useRef(null)
 
   useEffect(() => {
@@ -360,25 +414,28 @@ function LogcatPanel({ manager }) {
 
   useEffect(() => { load() }, [lineCount])
 
+  const filtered = filterText ? lines.filter(l => l.toLowerCase().includes(filterText.toLowerCase())) : lines
+
   return (
     <div className="logcat-panel">
       <div className="panel-toolbar">
-        <div className="input-group" style={{ width: 120 }}>
+        <input value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filter..." style={{ maxWidth: 160 }} />
+        <div className="input-group" style={{ width: 100 }}>
           <input type="number" value={lineCount} onChange={e => setLineCount(Number(e.target.value))} min={10} max={10000} />
         </div>
         <button className="btn btn-sm" onClick={load} disabled={loading}>
-          {loading ? <span className="spinner" /> : '⟳ Refresh'}
+          {loading ? <span className="spinner" /> : '↻ Refresh'}
         </button>
         <label className="toggle-label">
           <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} />
-          Auto-scroll
+          Auto
         </label>
       </div>
       <div className="logcat-output" ref={outRef}>
-        {lines.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="empty-state">No log output</div>
         ) : (
-          lines.map((l, i) => {
+          filtered.map((l, i) => {
             let cls = ''
             if (l.includes(' E ')) cls = 'error'
             else if (l.includes(' W ')) cls = 'warning'
@@ -390,6 +447,213 @@ function LogcatPanel({ manager }) {
     </div>
   )
 }
+
+function BatteryPanel({ manager }) {
+  const [battery, setBattery] = useState(null)
+  const [storage, setStorage] = useState([])
+  const [loading, setLoading] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const [bat, sto] = await Promise.all([manager.getBattery(), manager.getStorage()])
+      setBattery(bat); setStorage(sto)
+    } catch (err) { alert('Error: ' + err.message) }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const statusMap = { '1': 'Unknown', '2': 'Charging', '3': 'Discharging', '4': 'Not charging', '5': 'Full' }
+  const healthMap = { '1': 'Unknown', '2': 'Good', '3': 'Overheat', '4': 'Dead', '5': 'OV', '6': 'Failure', '7': 'Cold' }
+
+  return (
+    <div className="list-panel">
+      <div className="panel-toolbar">
+        <span className="hint">Device health</span>
+        <button className="btn btn-sm" onClick={load} disabled={loading}>
+          {loading ? <span className="spinner" /> : '↻ Refresh'}
+        </button>
+      </div>
+      {battery && (
+        <div className="status-grid">
+          {[
+            { label: 'Level', value: `${battery.level}%` },
+            { label: 'Status', value: statusMap[battery.status] || battery.status },
+            { label: 'Health', value: healthMap[battery.health] || battery.health },
+            { label: 'Temp', value: `${battery.temperature}°C` },
+            { label: 'Voltage', value: battery.voltage ? `${(parseInt(battery.voltage) / 1000).toFixed(3)}V` : '--' },
+            { label: 'Technology', value: battery.technology || '--' },
+          ].map((item, i) => (
+            <div key={i} className="status-item">
+              <span className="label">{item.label}</span>
+              <span className="value">{item.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {storage.length > 0 && (
+        <>
+          <div className="section-label">Storage</div>
+          {storage.map((s, i) => (
+            <div key={i} className="device-row" style={{ fontSize: 11 }}>
+              <span className="label">{s.mount}</span>
+              <span className="value">{s.size} / {s.used} used / {s.avail} free</span>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ProcessPanel({ manager }) {
+  const [processes, setProcesses] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [filter, setFilter] = useState('')
+  const [killing, setKilling] = useState(null)
+
+  async function load() {
+    setLoading(true)
+    try {
+      setProcesses(await manager.getProcesses())
+    } catch (err) { alert('Error: ' + err.message) }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function kill(pid) {
+    setKilling(pid)
+    try {
+      await manager.execShell(`kill ${pid}`)
+      setProcesses(prev => prev.filter(p => p.pid !== pid))
+    } catch (err) { alert('Error: ' + err.message) }
+    setKilling(null)
+  }
+
+  const filtered = filter ? processes.filter(p => p.name.toLowerCase().includes(filter.toLowerCase())) : processes
+
+  return (
+    <div className="list-panel">
+      <div className="panel-toolbar">
+        <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter..." style={{ maxWidth: 180 }} />
+        <span className="hint">{filtered.length} processes</span>
+        <button className="btn btn-sm" onClick={load} disabled={loading}>
+          {loading ? <span className="spinner" /> : '↻ Refresh'}
+        </button>
+      </div>
+      <div className="list-container" style={{ maxHeight: 440 }}>
+        {filtered.length === 0 && <div className="empty-state">No processes</div>}
+        {filtered.map((p, i) => (
+          <div key={i} className="file-item">
+            <span className="fi-icon" style={{ color: 'var(--text-muted)', fontSize: 10 }}>{p.pid}</span>
+            <span className="fi-name">{p.name}</span>
+            <button className="btn btn-sm btn-ghost" onClick={() => kill(p.pid)}
+              disabled={killing === p.pid} style={{ color: 'var(--danger)', fontSize: 10 }}>
+              {killing === p.pid ? <span className="spinner" /> : 'kill'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ApkInstallPanel({ manager }) {
+  const [file, setFile] = useState(null)
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  async function install() {
+    if (!file) return
+    setBusy(true); setResult(null)
+    try {
+      const buf = await file.arrayBuffer()
+      const out = await manager.installApk(new Uint8Array(buf))
+      setResult({ ok: true, text: out || 'Install complete' })
+    } catch (err) {
+      setResult({ ok: false, text: err.message })
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="list-panel">
+      <div className="panel-toolbar">
+        <span className="hint">Install APK</span>
+      </div>
+      <div className="upload-zone" onClick={() => document.getElementById('apk-input')?.click()}>
+        <input id="apk-input" type="file" accept=".apk" hidden onChange={e => setFile(e.target.files[0])} />
+        <div className="upload-icon">⊞</div>
+        <p>{file ? file.name : 'Select APK to install'}</p>
+        {file && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{(file.size / 1024 / 1024).toFixed(1)} MB</span>}
+      </div>
+      {file && (
+        <button className="btn btn-primary" onClick={install} disabled={busy} style={{ marginTop: 8, width: '100%' }}>
+          {busy ? <><span className="spinner" /> Installing...</> : 'Install APK'}
+        </button>
+      )}
+      {result && (
+        <div className={`install-result ${result.ok ? 'success' : 'error'}`}>
+          {result.text}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ScreenRecordPanel({ manager }) {
+  const [duration, setDuration] = useState(10)
+  const [busy, setBusy] = useState(false)
+  const [data, setData] = useState(null)
+
+  async function record() {
+    setBusy(true)
+    try {
+      const d = await manager.screenRecord(duration)
+      if (d && d.length > 0) setData(URL.createObjectURL(new Blob([d], { type: 'video/mp4' })))
+    } catch (err) { alert('Error: ' + err.message) }
+    setBusy(false)
+  }
+
+  return (
+    <div className="screenshot-area">
+      <div className="preview-area" style={{ minHeight: 200 }}>
+        {data ? (
+          <video src={data} controls style={{ maxWidth: '100%', maxHeight: '60vh' }} />
+        ) : (
+          <div className="placeholder">
+            <div className="ph-icon">▶</div>
+            <h3>Screen recording</h3>
+            <p>Record for {duration} seconds</p>
+          </div>
+        )}
+      </div>
+      <div className="screenshot-actions">
+        <div className="input-group" style={{ maxWidth: 120 }}>
+          <input type="number" value={duration} onChange={e => setDuration(Math.max(3, Number(e.target.value)))} min={3} max={180} />
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>sec</span>
+        </div>
+        <button className="btn btn-primary" onClick={record} disabled={busy}>
+          {busy ? <><span className="spinner" /> Recording...</> : 'Record'}
+        </button>
+        {data && <button className="btn" onClick={() => { const a = document.createElement('a'); a.href = data; a.download = `rec_${Date.now()}.mp4`; a.click() }}>↓ Download</button>}
+        {data && <button className="btn btn-ghost" onClick={() => setData(null)}>×</button>}
+      </div>
+    </div>
+  )
+}
+
+const PRESET_COMMANDS = [
+  { label: 'Device info', cmd: 'getprop ro.product.model && getprop ro.build.version.release' },
+  { label: 'IP address', cmd: "ip addr show wlan0 2>/dev/null | grep inet || ifconfig wlan0 2>/dev/null | grep inet" },
+  { label: 'Uptime', cmd: 'uptime' },
+  { label: 'Memory', cmd: 'free -h' },
+  { label: 'CPU info', cmd: 'cat /proc/cpuinfo' },
+  { label: 'WiFi networks', cmd: 'dumpsys wifi | grep SSID' },
+  { label: 'Running services', cmd: 'dumpsys activity services | grep "ServiceRecord"' },
+]
 
 export default function Home() {
   const [manager] = useState(() => new AdbConnectionManager())
@@ -539,11 +803,15 @@ export default function Home() {
             <div className="dashboard-sidebar">
               <DeviceInfo deviceInfo={deviceInfo} onRefresh={refreshInfo} />
               <QuickActions
-                onScreenshot={() => setTab('screenshot')}
                 onShell={() => setTab('shell')}
+                onScreenshot={() => setTab('screenshot')}
                 onFiles={() => setTab('files')}
                 onApps={() => setTab('apps')}
                 onLogcat={() => setTab('logcat')}
+                onBattery={() => setTab('battery')}
+                onProcess={() => setTab('process')}
+                onApk={() => setTab('apk')}
+                onRecord={() => setTab('record')}
               />
             </div>
             <div className="dashboard-main">
@@ -554,6 +822,10 @@ export default function Home() {
                   { id: 'files', label: 'Files' },
                   { id: 'apps', label: 'Apps' },
                   { id: 'logcat', label: 'Logcat' },
+                  { id: 'battery', label: 'Health' },
+                  { id: 'process', label: 'Process' },
+                  { id: 'apk', label: 'APK' },
+                  { id: 'record', label: 'Record' },
                 ].map(t => (
                   <button key={t.id} className={`tab-btn ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
                     {t.label}
@@ -566,6 +838,10 @@ export default function Home() {
                 {tab === 'files' && <FileExplorerPanel manager={manager} />}
                 {tab === 'apps' && <AppListPanel manager={manager} />}
                 {tab === 'logcat' && <LogcatPanel manager={manager} />}
+                {tab === 'battery' && <BatteryPanel manager={manager} />}
+                {tab === 'process' && <ProcessPanel manager={manager} />}
+                {tab === 'apk' && <ApkInstallPanel manager={manager} />}
+                {tab === 'record' && <ScreenRecordPanel manager={manager} />}
               </div>
             </div>
           </div>

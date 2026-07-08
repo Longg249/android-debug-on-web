@@ -341,7 +341,7 @@ input::placeholder { color: var(--text-muted); font-size: 12px; }
 }
 .quick-actions .qa-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
 }
 @media (max-width: 900px) {
   .quick-actions .qa-body { grid-template-columns: repeat(5, 1fr); }
@@ -759,6 +759,70 @@ input::placeholder { color: var(--text-muted); font-size: 12px; }
 }
 .app-footer a { color: var(--accent); text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
+
+/* ─── Status Grid (Battery) ─── */
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-sm);
+}
+.status-item .label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.status-item .value { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 12px 0 6px;
+}
+
+/* ─── Upload Zone (APK) ─── */
+.upload-zone {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transition);
+  background: rgba(0, 0, 0, 0.1);
+}
+.upload-zone:hover { border-color: var(--accent); }
+.upload-zone .upload-icon { font-size: 28px; opacity: 0.25; margin-bottom: 6px; }
+.upload-zone p { font-size: 13px; color: var(--text-secondary); }
+
+.install-result {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.install-result.success { background: var(--success-subtle); color: var(--success); }
+.install-result.error { background: var(--danger-subtle); color: var(--danger); }
+
+/* ─── Preset Commands Select ─── */
+.preset-select {
+  padding: 3px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  max-width: 100px;
+}
+.preset-select:focus { border-color: var(--accent); }
 
 /* ─── Utility ─── */
 .fade-in { animation: fadeIn 0.25s ease; }
