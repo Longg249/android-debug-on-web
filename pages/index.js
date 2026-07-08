@@ -663,6 +663,7 @@ export default function Home() {
   const [tab, setTab] = useState('shell')
   const [deviceIp, setDeviceIp] = useState('')
   const [devicePort, setDevicePort] = useState('5555')
+  const [relayUrl, setRelayUrl] = useState('wss://localhost:8080')
   const [toasts, setToasts] = useState([])
   const [connecting, setConnecting] = useState(false)
 
@@ -689,9 +690,14 @@ export default function Home() {
 
   const connectUsb = async () => { setErrMsg(null); toast('Connecting USB...', 'info'); await manager.connectUsb() }
   const connectWifi = async () => {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    const host = isLocal ? window.location.host : 'localhost:8787'
-    const url = `ws://${host}/adb-proxy?target=${deviceIp}:${devicePort}`
+    const host = typeof window !== 'undefined' ? window.location.hostname : ''
+    const isLocal = host === 'localhost' || host === '127.0.0.1'
+    let url
+    if (isLocal) {
+      url = `ws://${window.location.host}/adb-proxy?target=${deviceIp}:${devicePort}`
+    } else {
+      url = `${(relayUrl || 'wss://localhost:8080').replace(/\/$/, '')}/bridge?target=${deviceIp}:${devicePort}`
+    }
     setErrMsg(null); toast('Connecting WiFi...', 'info'); await manager.connectWifi(url)
   }
   const disconnect = async () => { await manager.disconnect(); toast('Disconnected', 'info') }
@@ -775,10 +781,16 @@ export default function Home() {
               <details>
                 <summary className="hint-header">How to connect via WiFi</summary>
                 <div className="hint-content">
-                  <code>1. adb tcpip 5555</code>
-                  <code>2. adb connect {deviceIp || 'DEVICE_IP'}:{devicePort || '5555'}</code>
-                  <code>3. Enter device IP:Port above → click Connect</code>
-                  <code style={{ color: 'var(--text-muted)' }}>Proxy auto-connects to localhost:8787 — run node proxy-server.js if needed</code>
+                  <code>1. On your PC: node connector.js</code>
+                  <code>2. Enter device IP:Port above → click Connect</code>
+                  <code style={{ color: 'var(--text-muted)', fontSize: 10 }}>or run npm run dev for zero-config</code>
+                </div>
+              </details>
+              <details>
+                <summary className="hint-header">Relay server</summary>
+                <div className="hint-content">
+                  <input value={relayUrl} onChange={e => setRelayUrl(e.target.value)}
+                    placeholder="wss://your-relay.up.railway.app" style={{ fontSize: 11, fontFamily: 'monospace' }} />
                 </div>
               </details>
             </div>
