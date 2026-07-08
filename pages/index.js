@@ -691,13 +691,8 @@ export default function Home() {
 
   const connectUsb = async () => { setErrMsg(null); toast('Connecting USB...', 'info'); await manager.connectUsb() }
   const connectWifi = async () => {
-    let url
-    if (isLocal) {
-      url = `ws://${window.location.host}/adb-proxy?target=${deviceIp}:${devicePort}`
-    } else {
-      if (!proxyHost) { toast('Enter proxy server address', 'error'); return }
-      url = `ws://${proxyHost}/adb-proxy?target=${deviceIp}:${devicePort}`
-    }
+    const host = isLocal ? window.location.host : proxyHost
+    const url = `ws://${host}/adb-proxy?target=${deviceIp}:${devicePort}`
     setErrMsg(null); toast('Connecting WiFi...', 'info'); await manager.connectWifi(url)
   }
   const disconnect = async () => { await manager.disconnect(); toast('Disconnected', 'info') }
@@ -763,7 +758,11 @@ export default function Home() {
               <div className="card-icon wifi">WiFi</div>
               <div className="card-body">
                 <h3>WiFi Connection</h3>
-                <p>Connect directly to device via LAN.</p>
+                {isLocal ? (
+                  <p>Connect directly to device via LAN.</p>
+                ) : (
+                  <p>Requires a proxy server on your LAN. <a href="https://github.com/Longg249/android-debug-on-web" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Run locally</a> for zero-config.</p>
+                )}
               </div>
             </div>
             <div className="card-action" style={{ flexDirection: 'column', gap: 8 }}>
@@ -771,8 +770,12 @@ export default function Home() {
                 <input value={deviceIp} onChange={e => setDeviceIp(e.target.value)} placeholder="Device IP (e.g. 192.168.1.100)" />
                 <input value={devicePort} onChange={e => setDevicePort(e.target.value)} placeholder="5555" style={{ maxWidth: 80 }} />
               </div>
-              {!isLocal && <input value={proxyHost} onChange={e => setProxyHost(e.target.value)} placeholder="Proxy IP:Port (e.g. 192.168.1.50:8787)" />}
-              <button className="btn btn-primary" onClick={connectWifi} disabled={connecting || connected || !deviceIp.trim()}
+              {!isLocal && (
+                <input value={proxyHost} onChange={e => setProxyHost(e.target.value)}
+                  placeholder="Proxy IP:Port (e.g. 192.168.1.50:8787)" />
+              )}
+              <button className="btn btn-primary" onClick={connectWifi}
+                disabled={connecting || connected || !deviceIp.trim() || (!isLocal && !proxyHost)}
                 style={{ width: '100%' }}>
                 {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : 'Connect WiFi'}
               </button>
@@ -786,7 +789,10 @@ export default function Home() {
                   {isLocal ? (
                     <code>3. Enter device IP:Port above → click Connect</code>
                   ) : (
-                    <code>3. Run: node proxy-server.js {deviceIp || 'DEVICE_IP'}</code>
+                    <>
+                      <code>3. On your PC, run: node proxy-server.js {deviceIp || 'DEVICE_IP'}</code>
+                      <code>4. Enter the proxy IP:Port above → click Connect</code>
+                    </>
                   )}
                 </div>
               </details>
