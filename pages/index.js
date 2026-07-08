@@ -1,13 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { AdbConnectionManager, CONNECT_STATE } from '../lib/adb'
 
-// --- Toast notifications ---
 function Toast({ message, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t) }, [onClose])
   return <div className={`toast ${type}`}>{message}</div>
 }
 
-// --- Device Dashboard Components ---
 function DeviceInfo({ deviceInfo, onRefresh }) {
   if (!deviceInfo) return null
   const fields = [
@@ -18,34 +16,37 @@ function DeviceInfo({ deviceInfo, onRefresh }) {
     { label: 'Serial', key: 'ro.serialno' },
   ]
   return (
-    <div className="device-info-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+    <div className="device-card fade-in">
+      <div className="device-card-header">
         <h3>Thiết bị</h3>
-        <button className="btn btn-sm" onClick={onRefresh}>⟳ Làm mới</button>
+        <button className="btn btn-sm btn-ghost" onClick={onRefresh} title="Làm mới">⟳</button>
       </div>
-      {fields.map(f => (
-        <div key={f.key} className="device-info-item">
-          <span className="label">{f.label}</span>
-          <span className="value">{deviceInfo[f.key] || '--'}</span>
-        </div>
-      ))}
+      <div className="device-body">
+        {fields.map(f => (
+          <div key={f.key} className="device-row">
+            <span className="label">{f.label}</span>
+            <span className="value">{deviceInfo[f.key] || '--'}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-function QuickActions({ onScreenshot, onShell, onFiles, disabled }) {
-  const actions = [
-    { label: '📷 Chụp màn hình', action: onScreenshot },
-    { label: '💻 Shell', action: onShell },
-    { label: '📁 File Explorer', action: onFiles },
+function QuickActions({ onScreenshot, onShell, onFiles }) {
+  const items = [
+    { icon: '💻', label: 'Shell', action: onShell },
+    { icon: '📷', label: 'Screenshot', action: onScreenshot },
+    { icon: '📁', label: 'Files', action: onFiles },
   ]
   return (
-    <div className="device-info-card">
-      <h3>Thao tác nhanh</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {actions.map(a => (
-          <button key={a.label} className="btn btn-sm" onClick={a.action} disabled={disabled}>
-            {a.label}
+    <div className="quick-actions">
+      <div className="qa-header"><h3>Thao tác</h3></div>
+      <div className="qa-body">
+        {items.map(it => (
+          <button key={it.label} className="qa-item" onClick={it.action}>
+            <span className="qa-icon">{it.icon}</span>
+            <span className="qa-label">{it.label}</span>
           </button>
         ))}
       </div>
@@ -53,254 +54,215 @@ function QuickActions({ onScreenshot, onShell, onFiles, disabled }) {
   )
 }
 
-// --- Shell Terminal ---
 function ShellPanel({ manager }) {
-  const [command, setCommand] = useState('')
-  const [output, setOutput] = useState([])
-  const [running, setRunning] = useState(false)
-  const [session, setSession] = useState(null)
-  const outputRef = useRef(null)
-  const inputRef = useRef(null)
+  const [cmd, setCmd] = useState('')
+  const [lines, setLines] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [stream, setStream] = useState(null)
+  const outRef = useRef(null)
+  const inpRef = useRef(null)
 
-  useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight }, [output])
+  const addLine = (text, type = 'output') => setLines(prev => [...prev, { text, type }])
+
+  useEffect(() => { if (outRef.current) outRef.current.scrollTop = outRef.current.scrollHeight }, [lines])
 
   useEffect(() => {
-    return () => {
-      if (session) {
-        session.close().catch(() => {})
-      }
-    }
-  }, [session])
+    return () => { if (stream) stream.close().catch(() => {}) }
+  }, [stream])
 
-  async function startShell() {
+  async function runOnce(c) {
+    setBusy(true)
+    addLine(`$ ${c}\n`, 'prompt')
     try {
-      setOutput(prev => [...prev, { text: 'Đang mở shell...\r\n', type: 'info' }])
+      const out = await manager.execShell(c)
+      addLine(out || '(no output)\n')
+    } catch (err) {
+      addLine(`Error: ${err.message}\n`, 'error')
+    }
+    setBusy(false)
+    setCmd('')
+    inpRef.current?.focus()
+  }
+
+  async function openShell() {
+    addLine('Opening shell...\n', 'info')
+    try {
       const s = await manager.execShellStream()
-      setSession(s)
-      setOutput(prev => [...prev, { text: 'shell@android:/ $ ', type: 'prompt' }])
-      readLoop(s)
-    } catch (err) {
-      setOutput(prev => [...prev, { text: `Lỗi: ${err.message}\r\n`, type: 'error' }])
-    }
-  }
-
-  async function readLoop(s) {
-    try {
-      while (true) {
-        const data = await s.read()
-        if (data === null) {
-          setOutput(prev => [...prev, { text: '\r\n(Kết thúc shell)\r\n', type: 'info' }])
-          break
-        }
-        const text = new TextDecoder().decode(data)
-        setOutput(prev => [...prev, { text, type: 'output' }])
-      }
-    } catch (err) {
-      if (err.message !== 'WebSocket closed') {
-        setOutput(prev => [...prev, { text: `\r\nLỗi: ${err.message}\r\n`, type: 'error' }])
-      }
-    }
-  }
-
-  async function runCommand(e) {
-    e.preventDefault()
-    if (!command.trim() || running) return
-
-    if (!session) {
-      await startShell()
-      if (!session) return
-    }
-
-    setRunning(true)
-    setOutput(prev => [...prev, { text: command + '\r\n', type: 'input' }])
-    try {
-      await session.write(new TextEncoder().encode(command + '\n'))
-      const timer = setTimeout(async () => {
+      setStream(s)
+      addLine('shell connected\n', 'prompt')
+      ;(async () => {
         try {
-          const result = await manager.execShell(command)
-          setOutput(prev => [...prev, { text: result + '\r\n', type: 'output' }])
-        } catch (_) {}
-      }, 3000)
-      const readData = await session.read()
-      clearTimeout(timer)
-      if (readData) {
-        setOutput(prev => [...prev, { text: new TextDecoder().decode(readData), type: 'output' }])
-      }
+          while (true) {
+            const d = await s.read()
+            if (d === null) { addLine('\n(closed)\n', 'info'); break }
+            addLine(new TextDecoder().decode(d))
+          }
+        } catch (err) {
+          if (err.message !== 'WebSocket closed') addLine(`\n${err.message}\n`, 'error')
+        }
+      })()
     } catch (err) {
-      setOutput(prev => [...prev, { text: `\r\nLỗi: ${err.message}\r\n`, type: 'error' }])
-      setSession(null)
+      addLine(`Error: ${err.message}\n`, 'error')
     }
-    setRunning(false)
-    setCommand('')
-    if (inputRef.current) inputRef.current.focus()
   }
 
-  async function runSimpleCommand() {
-    if (!command.trim() || running) return
-    setRunning(true)
-    setOutput(prev => [...prev, { text: `$ ${command}\r\n`, type: 'prompt' }])
+  function handleSubmit(e) {
+    e.preventDefault()
+    if (!cmd.trim() || busy) return
+    stream ? runInStream(cmd) : runOnce(cmd)
+  }
+
+  async function runInStream(c) {
+    setBusy(true)
+    addLine(`${cmd}\n`)
     try {
-      const result = await manager.execShell(command)
-      setOutput(prev => [...prev, { text: result + '\r\n', type: 'output' }])
+      await stream.write(new TextEncoder().encode(cmd + '\n'))
+      const d = await stream.read()
+      if (d) addLine(new TextDecoder().decode(d))
     } catch (err) {
-      setOutput(prev => [...prev, { text: `Lỗi: ${err.message}\r\n`, type: 'error' }])
+      addLine(`Error: ${err.message}\n`, 'error')
     }
-    setRunning(false)
-    setCommand('')
+    setBusy(false)
+    setCmd('')
+    inpRef.current?.focus()
   }
-
-  const handleSubmit = session ? runCommand : runSimpleCommand
 
   return (
-    <div>
-      <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          Nhập lệnh ADB shell và nhấn Enter
-        </span>
-        {session && (
-          <button className="btn btn-sm btn-danger" onClick={() => { session.close(); setSession(null) }}>
-            Đóng shell
-          </button>
-        )}
+    <div className="terminal-container">
+      <div className="terminal-toolbar">
+        <span className="hint">{stream ? 'Shell mode' : 'Single command mode'}</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {!stream && <button className="btn btn-sm" onClick={openShell} disabled={busy}>Open shell</button>}
+          {stream && <button className="btn btn-sm btn-danger" onClick={() => { stream.close(); setStream(null); addLine('shell closed\n', 'info') }}>Close shell</button>}
+          <button className="btn btn-sm btn-ghost" onClick={() => setLines([])}>Clear</button>
+        </div>
       </div>
-      <div className="terminal-output" ref={outputRef}>
-        {output.length === 0 ? (
-          <span style={{ color: 'var(--text-muted)' }}>Nhập lệnh để bắt đầu...</span>
-        ) : (
-          output.map((line, i) => (
-            <span key={i} className={line.type === 'error' ? 'error' : line.type === 'info' ? 'info' : line.type === 'prompt' ? 'prompt' : ''}>
-              {line.text}
-            </span>
-          ))
-        )}
-        {running && <span className="spinner" style={{ marginLeft: 4 }} />}
+
+      <div className="terminal-box">
+        <div className="terminal-bar">
+          <span className="dot r" /><span className="dot y" /><span className="dot g" />
+          <span className="title">adb-shell</span>
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
+            {busy ? 'running...' : ''}
+            {stream ? 'interactive' : 'single'}
+          </span>
+        </div>
+        <div className="terminal-output" ref={outRef}>
+          {lines.length === 0 ? (
+            <span style={{ color: 'var(--text-muted)' }}>Type a command and press Enter</span>
+          ) : (
+            lines.map((l, i) => (
+              <span key={i} className={
+                l.type === 'error' ? 'error' : l.type === 'info' ? 'info' : l.type === 'prompt' ? 'prompt' : ''
+              }>{l.text}</span>
+            ))
+          )}
+          {busy && <span className="spinner" style={{ marginLeft: 4 }} />}
+        </div>
+        <form className="terminal-input-row" onSubmit={handleSubmit}>
+          <span className="prompt-char">{stream ? '>' : '$'}</span>
+          <input ref={inpRef} type="text" value={cmd} onChange={e => setCmd(e.target.value)}
+            placeholder={stream ? 'type command...' : 'adb shell command...'} disabled={busy} autoFocus />
+        </form>
       </div>
-      <form className="terminal-input-area" onSubmit={handleSubmit}>
-        <input
-          ref={inputRef}
-          type="text"
-          value={command}
-          onChange={e => setCommand(e.target.value)}
-          placeholder="$ nhập lệnh..."
-          disabled={running}
-          autoFocus
-        />
-        <button className="btn btn-primary btn-sm" type="submit" disabled={running || !command.trim()}>
-          {running ? '...' : 'Gửi'}
-        </button>
-      </form>
     </div>
   )
 }
 
-// --- Screenshot ---
 function ScreenshotPanel({ manager }) {
-  const [screenshot, setScreenshot] = useState(null)
+  const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
 
   async function capture() {
     setLoading(true)
     try {
-      const data = await manager.takeScreenshot()
-      if (data) setScreenshot(data)
-    } catch (err) {
-      alert('Lỗi chụp màn hình: ' + err.message)
-    }
+      const d = await manager.takeScreenshot()
+      if (d) setData(d)
+    } catch (err) { alert('Error: ' + err.message) }
     setLoading(false)
   }
 
   return (
     <div className="screenshot-area">
-      {screenshot ? (
-        <>
-          <img src={screenshot} alt="Screenshot" />
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={capture} disabled={loading}>
-              {loading ? <><span className="spinner" /> Đang chụp...</> : '📷 Chụp lại'}
-            </button>
+      <div className="preview-area">
+        {data ? (
+          <img src={data} alt="screenshot" />
+        ) : (
+          <div className="placeholder">
+            <div className="ph-icon">📱</div>
+            <h3>Screen capture</h3>
+            <p>Capture your device screen and save it as PNG</p>
+          </div>
+        )}
+      </div>
+      <div className="screenshot-actions">
+        <button className="btn btn-primary" onClick={capture} disabled={loading}>
+          {loading ? <><span className="spinner" /> Capturing...</> : '📷 Capture'}
+        </button>
+        {data && (
+          <>
+            <button className="btn" onClick={capture} disabled={loading}>⟳ Recapture</button>
             <button className="btn" onClick={() => {
               const a = document.createElement('a')
-              a.href = screenshot
-              a.download = `screenshot_${Date.now()}.png`
-              a.click()
-            }}>💾 Tải xuống</button>
-          </div>
-        </>
-      ) : (
-        <div className="screenshot-placeholder">
-          <div className="icon">📱</div>
-          <h3>Chụp màn hình thiết bị</h3>
-          <p>Nhấn nút bên dưới để chụp màn hình thiết bị Android</p>
-          <button className="btn btn-primary" onClick={capture} disabled={loading}>
-            {loading ? <><span className="spinner" /> Đang chụp...</> : '📷 Chụp màn hình'}
-          </button>
-        </div>
-      )}
+              a.href = data; a.download = `screenshot_${Date.now()}.png`; a.click()
+            }}>💾 Download</button>
+            <button className="btn btn-ghost" onClick={() => setData(null)}>✕ Dismiss</button>
+          </>
+        )}
+      </div>
     </div>
   )
 }
 
-// --- File Explorer ---
 function FileExplorerPanel({ manager }) {
   const [path, setPath] = useState('/sdcard')
-  const [files, setFiles] = useState([])
+  const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [err, setErr] = useState(null)
 
-  async function loadFiles(dir) {
-    setLoading(true)
-    setError(null)
+  async function load(dir) {
+    setLoading(true); setErr(null)
     try {
       const list = await manager.listFiles(dir || path)
-      setFiles(list)
-      if (dir) setPath(dir)
-    } catch (err) {
-      setError(err.message)
-    }
+      setItems(list); if (dir) setPath(dir)
+    } catch (e) { setErr(e.message) }
     setLoading(false)
   }
 
-  useEffect(() => { loadFiles(path) }, [])
+  useEffect(() => { load(path) }, [])
 
-  function navigate(dir) {
-    const newPath = dir === '..'
-      ? path.split('/').slice(0, -1).join('/') || '/'
-      : path.endsWith('/') ? path + dir : path + '/' + dir
-    loadFiles(newPath)
+  function go(dir) {
+    load(dir === '..' ? path.split('/').slice(0, -1).join('/') || '/' : path.replace(/\/$/, '') + '/' + dir)
   }
 
   return (
-    <div>
-      <div className="input-group" style={{ marginBottom: 12 }}>
-        <input
-          type="text"
-          value={path}
-          onChange={e => setPath(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && loadFiles()}
-          placeholder="Đường dẫn..."
-        />
-        <button className="btn btn-sm btn-primary" onClick={() => loadFiles()} disabled={loading}>
-          {loading ? <span className="spinner" /> : '🔍 Đi'}
+    <div className="file-explorer">
+      <div className="path-bar">
+        <input value={path} onChange={e => setPath(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && load()} placeholder="/sdcard" />
+        <button className="btn btn-sm btn-primary" onClick={() => load()} disabled={loading}>
+          {loading ? <span className="spinner" /> : 'Go'}
         </button>
       </div>
-      {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }}>⚠️ {error}</div>}
-      <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-        {files.length === 0 && !loading ? (
-          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-            Không có file hoặc thư mục rỗng
+      {err && <div className="error-banner"><span className="err-icon">⚠️</span> {err}</div>}
+      <div className="file-list-container">
+        {items.length === 0 && !loading ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+            Empty directory
           </div>
         ) : (
           <ul className="file-list">
             {path !== '/' && (
-              <li className="file-item" onClick={() => navigate('..')}>
-                <span className="icon">📁</span>
-                <span className="name">.. (Lên trên)</span>
+              <li className="file-item dir" onClick={() => go('..')}>
+                <span className="fi-icon">📁</span>
+                <span className="fi-name">.. (up)</span>
               </li>
             )}
-            {files.map((f, i) => (
-              <li key={i} className="file-item" onClick={() => f.raw.startsWith('d') && navigate(f.name)}>
-                <span className="icon">{f.raw.startsWith('d') ? '📁' : '📄'}</span>
-                <span className="name">{f.raw}</span>
+            {items.map((f, i) => (
+              <li key={i} className={`file-item${f.raw.startsWith('d') ? ' dir' : ''}`}
+                onClick={() => f.raw.startsWith('d') && go(f.name)}>
+                <span className="fi-icon">{f.raw.startsWith('d') ? '📁' : '📄'}</span>
+                <span className="fi-name">{f.name}</span>
               </li>
             ))}
           </ul>
@@ -310,242 +272,199 @@ function FileExplorerPanel({ manager }) {
   )
 }
 
-// --- Main Page ---
 export default function Home() {
   const [manager] = useState(() => new AdbConnectionManager())
   const [state, setState] = useState(CONNECT_STATE.DISCONNECTED)
   const [deviceInfo, setDeviceInfo] = useState(null)
-  const [error, setError] = useState(null)
-  const [activeTab, setActiveTab] = useState('shell')
+  const [errMsg, setErrMsg] = useState(null)
+  const [tab, setTab] = useState('shell')
   const [wsUrl, setWsUrl] = useState('ws://localhost:8787')
-  const [toast, setToast] = useState(null)
+  const [toasts, setToasts] = useState([])
   const [connecting, setConnecting] = useState(false)
 
-  const showToast = useCallback((msg, type) => setToast({ message: msg, type }), [])
+  const toast = useCallback((msg, type) => {
+    const id = Date.now()
+    setToasts(prev => [...prev, { id, msg, type }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
+  }, [])
 
   useEffect(() => {
-    manager.onStateChange = (newState) => {
-      setState(newState)
-      if (newState === CONNECT_STATE.CONNECTED) {
-        setConnecting(false)
-        setDeviceInfo(manager.deviceInfo)
-        showToast('Đã kết nối thiết bị thành công!', 'success')
-      } else if (newState === CONNECT_STATE.ERROR) {
-        setConnecting(false)
-        setError(manager.error)
-        showToast('Lỗi: ' + manager.error, 'error')
-      } else if (newState === CONNECT_STATE.CONNECTING) {
-        setConnecting(true)
-      } else if (newState === CONNECT_STATE.DISCONNECTED) {
-        setConnecting(false)
-        setDeviceInfo(null)
-        setError(null)
-      }
+    manager.onStateChange = s => {
+      setState(s)
+      if (s === CONNECT_STATE.CONNECTED) {
+        setConnecting(false); setDeviceInfo(manager.deviceInfo)
+        toast('Device connected', 'success')
+      } else if (s === CONNECT_STATE.ERROR) {
+        setConnecting(false); setErrMsg(manager.error)
+        toast(manager.error, 'error')
+      } else if (s === CONNECT_STATE.CONNECTING) { setConnecting(true) }
+      else if (s === CONNECT_STATE.DISCONNECTED) { setConnecting(false); setDeviceInfo(null); setErrMsg(null) }
     }
     return () => { manager.onStateChange = null }
-  }, [manager, showToast])
+  }, [manager, toast])
 
-  async function connectUsb() {
-    setError(null)
-    showToast('Đang kết nối USB...', 'info')
-    await manager.connectUsb()
+  const connectUsb = async () => { setErrMsg(null); toast('Connecting USB...', 'info'); await manager.connectUsb() }
+  const connectWifi = async () => { setErrMsg(null); toast('Connecting WiFi...', 'info'); await manager.connectWifi(wsUrl) }
+  const disconnect = async () => { await manager.disconnect(); toast('Disconnected', 'info') }
+  const refreshInfo = async () => {
+    try { setDeviceInfo(await manager.getDeviceInfo()); toast('Refreshed', 'info') }
+    catch (e) { toast(e.message, 'error') }
   }
 
-  async function connectWifi() {
-    setError(null)
-    showToast('Đang kết nối WiFi...', 'info')
-    await manager.connectWifi(wsUrl)
-  }
-
-  async function disconnect() {
-    await manager.disconnect()
-    showToast('Đã ngắt kết nối', 'info')
-  }
-
-  async function handleScreenshot() {
-    setActiveTab('screenshot')
-  }
-
-  async function handleShell() {
-    setActiveTab('shell')
-  }
-
-  async function handleFiles() {
-    setActiveTab('files')
-  }
-
-  async function refreshDeviceInfo() {
-    try {
-      const info = await manager.getDeviceInfo()
-      setDeviceInfo(info)
-      showToast('Đã làm mới thông tin', 'info')
-    } catch (err) {
-      showToast('Lỗi: ' + err.message, 'error')
-    }
-  }
-
-  const statusLabel = {
-    [CONNECT_STATE.DISCONNECTED]: 'Chưa kết nối',
-    [CONNECT_STATE.CONNECTING]: 'Đang kết nối...',
-    [CONNECT_STATE.AUTHENTICATING]: 'Đang xác thực...',
-    [CONNECT_STATE.CONNECTED]: 'Đã kết nối',
-    [CONNECT_STATE.ERROR]: 'Lỗi',
-  }
-
-  const isConnected = state === CONNECT_STATE.CONNECTED
-  const tabs = [
-    { id: 'shell', label: '💻 Shell' },
-    { id: 'screenshot', label: '📷 Screenshot' },
-    { id: 'files', label: '📁 Files' },
-  ]
+  const connected = state === CONNECT_STATE.CONNECTED
 
   return (
     <div className="app-container">
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <div className="toast-container">
+        {toasts.map(t => <Toast key={t.id} message={t.msg} type={t.type} onClose={() => setToasts(p => p.filter(x => x.id !== t.id))} />)}
+      </div>
 
       <header className="app-header">
-        <h1>
-          🤖 ADB Web
-          <small>Quản lý Android trên trình duyệt</small>
-        </h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div className="header-left">
+          <h1>🤖 ADB Web <span className="badge">v1.0</span></h1>
+        </div>
+        <div className="header-right">
           <span className={`status-badge ${state}`}>
             <span className={`status-dot ${state}`} />
-            {statusLabel[state]}
+            {{ [CONNECT_STATE.DISCONNECTED]: 'Disconnected', [CONNECT_STATE.CONNECTING]: 'Connecting...',
+               [CONNECT_STATE.AUTHENTICATING]: 'Authenticating...', [CONNECT_STATE.CONNECTED]: 'Connected',
+               [CONNECT_STATE.ERROR]: 'Error' }[state]}
             {connecting && <span className="spinner" style={{ marginLeft: 4 }} />}
           </span>
-          {isConnected && (
-            <button className="btn btn-danger btn-sm" onClick={disconnect}>🔌 Ngắt</button>
-          )}
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            v1.0
-          </span>
+          {connected && <button className="btn btn-sm btn-danger" onClick={disconnect}>🔌 Disconnect</button>}
         </div>
       </header>
 
       <main className="main-content">
-        {/* Connection Panel */}
         <div className="connection-panel">
           <div className="connection-card">
-            <h3><span className="icon">🔌</span> Kết nối qua USB</h3>
-            <p>Kết nối thiết bị Android qua cáp USB. Yêu cầu Chrome/Edge với WebUSB.</p>
-            <button
-              className="btn btn-primary"
-              onClick={connectUsb}
-              disabled={connecting || isConnected}
-            >
-              {connecting && state === CONNECT_STATE.CONNECTING ? (
-                <><span className="spinner" /> Đang kết nối...</>
-              ) : '🔗 Kết nối USB'}
-            </button>
+            <div className="card-header">
+              <div className="card-icon usb">🔌</div>
+              <div className="card-body">
+                <h3>USB Connection</h3>
+                <p>Connect via cable using WebUSB. Chrome / Edge required.</p>
+              </div>
+            </div>
+            <div className="card-action">
+              <button className="btn btn-primary" onClick={connectUsb} disabled={connecting || connected}>
+                {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : '🔗 Connect USB'}
+              </button>
+            </div>
             <div className="hint-box">
-              <div className="label">Hướng dẫn:</div>
-              <code>1. Bật USB Debugging trên thiết bị (Developer Options)</code>
-              <code>2. Cắm cáp USB vào máy tính</code>
-              <code>3. Nhấn "Kết nối USB" và chọn thiết bị</code>
-              <code>4. Xác nhận "Cho phép USB Debugging?" trên thiết bị</code>
+              <details>
+                <summary className="hint-header">📖 How to connect via USB</summary>
+                <div className="hint-content">
+                  <code>1. Enable Developer Options & USB Debugging on Android</code>
+                  <code>2. Plug in the USB cable</code>
+                  <code>3. Click "Connect USB" and select your device</code>
+                  <code>4. Accept "Allow USB Debugging" on your device</code>
+                </div>
+              </details>
             </div>
           </div>
 
           <div className="connection-card">
-            <h3><span className="icon">📶</span> Kết nối qua WiFi</h3>
-            <p>Kết nối qua mạng WiFi. Cần chạy proxy server trên máy cùng mạng.</p>
-            <div className="input-group" style={{ marginBottom: 8 }}>
-              <input
-                type="text"
-                value={wsUrl}
-                onChange={e => setWsUrl(e.target.value)}
-                placeholder="ws://192.168.1.x:8787"
-              />
-              <button
-                className="btn btn-primary"
-                onClick={connectWifi}
-                disabled={connecting || isConnected || !wsUrl.trim()}
-              >
-                {connecting && state === CONNECT_STATE.CONNECTING ? (
-                  <><span className="spinner" /> Đang kết nối...</>
-                ) : '🔗 Kết nối WiFi'}
-              </button>
+            <div className="card-header">
+              <div className="card-icon wifi">📶</div>
+              <div className="card-body">
+                <h3>WiFi Connection</h3>
+                <p>Connect over LAN. Requires a WebSocket proxy on your network.</p>
+              </div>
+            </div>
+            <div className="card-action">
+              <div className="input-group">
+                <input value={wsUrl} onChange={e => setWsUrl(e.target.value)} placeholder="ws://192.168.1.x:8787" />
+                <button className="btn btn-primary" onClick={connectWifi} disabled={connecting || connected || !wsUrl.trim()}>
+                  {connecting && state === CONNECT_STATE.CONNECTING ? <><span className="spinner" /> Connecting...</> : '🔗 Connect WiFi'}
+                </button>
+              </div>
             </div>
             <div className="hint-box">
-              <div className="label">Hướng dẫn:</div>
-              <code>adb tcpip 5555</code>
-              <code>adb connect &lt;IP_DEVICE&gt;:5555</code>
-              <code>node proxy-server.js &lt;IP_DEVICE&gt;</code>
+              <details>
+                <summary className="hint-header">📖 How to connect via WiFi</summary>
+                <div className="hint-content">
+                  <code>adb tcpip 5555</code>
+                  <code>adb connect &lt;DEVICE_IP&gt;:5555</code>
+                  <code>node proxy-server.js &lt;DEVICE_IP&gt;</code>
+                  <code>Then enter ws://YOUR_PC_IP:8787 above</code>
+                </div>
+              </details>
             </div>
           </div>
         </div>
 
-        {/* Error display */}
-        {error && state === CONNECT_STATE.ERROR && (
-          <div style={{
-            background: 'rgba(248,81,73,0.1)',
-            border: '1px solid var(--danger)',
-            borderRadius: 'var(--radius)',
-            padding: '12px 16px',
-            marginBottom: 16,
-            fontSize: 13,
-            color: 'var(--danger)',
-          }}>
-            ⚠️ {error}
-          </div>
+        {errMsg && state === CONNECT_STATE.ERROR && (
+          <div className="error-banner"><span className="err-icon">⚠️</span> {errMsg}</div>
         )}
 
-        {/* Dashboard */}
-        {isConnected ? (
+        {connected ? (
           <div className="dashboard">
             <div className="dashboard-sidebar">
-              <DeviceInfo deviceInfo={deviceInfo} onRefresh={refreshDeviceInfo} />
+              <DeviceInfo deviceInfo={deviceInfo} onRefresh={refreshInfo} />
               <QuickActions
-                onScreenshot={handleScreenshot}
-                onShell={handleShell}
-                onFiles={handleFiles}
-                disabled={!isConnected}
+                onScreenshot={() => setTab('screenshot')}
+                onShell={() => setTab('shell')}
+                onFiles={() => setTab('files')}
               />
             </div>
             <div className="dashboard-main">
               <nav className="tab-nav">
-                {tabs.map(t => (
-                  <button
-                    key={t.id}
-                    className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-                    onClick={() => setActiveTab(t.id)}
-                  >
+                {[
+                  { id: 'shell', label: '💻 Shell' },
+                  { id: 'screenshot', label: '📷 Screenshot' },
+                  { id: 'files', label: '📁 Files' },
+                ].map(t => (
+                  <button key={t.id} className={`tab-btn ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
                     {t.label}
                   </button>
                 ))}
               </nav>
-              <div className="tab-content">
-                {activeTab === 'shell' && <ShellPanel manager={manager} />}
-                {activeTab === 'screenshot' && <ScreenshotPanel manager={manager} />}
-                {activeTab === 'files' && <FileExplorerPanel manager={manager} />}
+              <div className="tab-content fade-in">
+                {tab === 'shell' && <ShellPanel manager={manager} />}
+                {tab === 'screenshot' && <ScreenshotPanel manager={manager} />}
+                {tab === 'files' && <FileExplorerPanel manager={manager} />}
               </div>
             </div>
           </div>
         ) : (
           <div className="connect-prompt">
-            <div className="icon">🤖</div>
-            <h2>Kết nối thiết bị Android của bạn</h2>
+            <div className="cp-icon">🤖</div>
+            <h2>Connect your Android device</h2>
             <p>
-              Sử dụng WebUSB (cáp) hoặc WiFi để kết nối với thiết bị Android
-              ngay trên trình duyệt. Hỗ trợ Chrome, Edge, và các trình duyệt dựa trên Chromium.
+              Use USB cable or WiFi to control your Android device directly from the browser.
+              Supports Chrome, Edge and Chromium-based browsers.
             </p>
-            <ol className="steps">
-              <li>📱 <strong>Bước 1:</strong> Bật <strong>Developer Options</strong> và <strong>USB Debugging</strong> trên thiết bị Android</li>
-              <li>🔌 <strong>Bước 2 (USB):</strong> Cắm cáp và nhấn <code>Kết nối USB</code></li>
-              <li>📶 <strong>Bước 2 (WiFi):</strong> Chạy proxy server và nhấn <code>Kết nối WiFi</code></li>
-              <li>✅ <strong>Bước 3:</strong> Xác nhận trên thiết bị Android (nếu được yêu cầu)</li>
-            </ol>
+            <div className="steps-grid">
+              <div className="step-card">
+                <div className="step-num">1</div>
+                <h4>Enable Debugging</h4>
+                <p>Turn on <strong>Developer Options</strong> and <strong>USB Debugging</strong> on your Android device.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-num">2</div>
+                <h4>Choose connection method</h4>
+                <p><strong>USB:</strong> Plug in cable → click <code>Connect USB</code><br />
+                  <strong>WiFi:</strong> Run <code>proxy-server.js</code> → click <code>Connect WiFi</code></p>
+              </div>
+              <div className="step-card">
+                <div className="step-num">3</div>
+                <h4>Authorize</h4>
+                <p>Accept the "Allow USB Debugging" prompt on your device if shown.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-num">4</div>
+                <h4>Control</h4>
+                <p>Use Shell, Screenshot, and File Explorer to manage your device.</p>
+              </div>
+            </div>
           </div>
         )}
       </main>
 
       <footer className="app-footer">
-        ADB Web - Quản lý thiết bị Android trên trình duyệt &bull;
-        Triển khai trên{' '}
-        <a href="https://vercel.com" target="_blank" rel="noopener noreferrer">Vercel</a>
-        {' '}&bull; Nguồn:{' '}
-        <a href="https://github.com/android/adb" target="_blank" rel="noopener noreferrer">ADB Protocol</a>
+        ADB Web — Android device management in the browser &bull;
+        Powered by <a href="https://vercel.com" target="_blank" rel="noopener noreferrer">Vercel</a>
+        {' '}&bull; <a href="https://github.com/Longg249/android-debug-on-web" target="_blank" rel="noopener noreferrer">GitHub</a>
       </footer>
     </div>
   )
